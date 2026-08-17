@@ -271,9 +271,8 @@ async function processVideoRecap(videoInput, options) {
     // အသံနှင့် ရုပ် ကိုက်ညီစေရန်
     vfFilters.push(`setpts=${maxStretchRatio}*PTS`);
 
-    // 🔴 1. Video Dimension အတိအကျ သတ်မှတ်ခြင်း (16:9 Youtube Size ပါ အသစ်ပေါင်းထည့်ထားပါသည်)
     let videoWidth = 1080;
-    let videoHeight = 1920; // Default (9:16)
+    let videoHeight = 1920; 
 
     if (options.aspectRatio === '9:16') {
         videoWidth = 1080; videoHeight = 1920;
@@ -283,7 +282,6 @@ async function processVideoRecap(videoInput, options) {
         videoWidth = 1080; videoHeight = 1080;
     }
 
-    // မည်သည့် ဗီဒီယိုကိုမဆို ရွေးချယ်ထားသော Size သို့ ကွက်တိဖြတ်မည်
     vfFilters.push(`scale=${videoWidth}:${videoHeight}:force_original_aspect_ratio=increase`);
     vfFilters.push(`crop=${videoWidth}:${videoHeight}`);
     
@@ -292,34 +290,38 @@ async function processVideoRecap(videoInput, options) {
         vfFilters.push('hflip');
     }
     
-    // ၃။ မူရင်းစာတန်းထိုးအား ဖုံးအုပ်ရန် (အမြဲတမ်း အောက်ခြေတွင်သာ ဖုံးပါမည်)
+    // ၃။ မူရင်းစာတန်းထိုးအား ဖုံးအုပ်ရန် (Black Box နေရာကို ပြင်ထားပါသည်)
     if (options.isBlurred === 'true' || options.isBlurred === true) {
-        vfFilters.push('drawbox=x=0:y=ih-140:w=iw:h=140:color=black@0.7:t=fill'); 
+        // Letterbox ဗီဒီယိုများအတွက် စာတန်းက အလယ်နားရောက်နေတတ်၍ y နေရာကို ih*0.65 သို့ ရွှေ့ပေးထားပါသည်
+        vfFilters.push('drawbox=x=0:y=ih*0.65:w=iw:h=150:color=black@0.9:t=fill'); 
     }
 
     // ၄။ စာတန်းထိုး အရောင်၊ နောက်ခံနှင့် နေရာချထားမှု
     const primaryColor = hexToAssColor(options.textColor);
     const backColor = hexToAssColor(options.bgColor);
     
-    // 🔴 5. FFmpeg ၏ Alignment Bug ကို ကျော်လွှားရန် MarginV ဖြင့် တွန်းတင်ခြင်း
-    let marginV = 80; // Default: Bottom (အောက်ခြေ Black Box ထဲ အတိအကျဝင်ရန် 80 ထားသည်)
+    let marginV = 80; 
 
     if (options.captionPosition === 'Top') {
-        marginV = videoHeight - 180; // ထိပ်သို့ တွန်းတင်မည်
+        marginV = videoHeight - 180; 
     } else if (options.captionPosition === 'Middle') {
-        marginV = Math.floor(videoHeight / 2) - 30; // မျက်နှာပြင်၏ အလယ်ဗဟိုသို့ တိတိကျကျ တွန်းတင်မည်
+        marginV = Math.floor(videoHeight / 2) - 30; 
     }
 
-    const safeSubtitlePath = 'output/auto-sub-zg.srt'; 
-    // Alignment ကို အမြဲတမ်း 2 (Bottom Center) အဖြစ်သာထားပြီး MarginV ဖြင့် အပေါ်အောက် ကစားပါမည်
+    // 🔴 ၅။ စာတန်းထိုး ဖိုင်လမ်းကြောင်းကို Absolute Path သို့ ပြောင်းပေးခြင်း (အရေးကြီးသည်)
+    const absoluteSrtPath = path.resolve(outputDir, 'auto-sub-zg.srt');
+    const safeSubtitlePath = absoluteSrtPath.replace(/\\/g, '/').replace(/:/g, '\\:'); 
+    
     const assStyle = `Fontname=Zawgyi-One,FontSize=22,PrimaryColour=${primaryColor},BackColour=${backColor},BorderStyle=3,Outline=1,Alignment=2,MarginV=${marginV}`;
     
+    // fontsdir ကို Root Directory အဖြစ် သေချာစွာ သတ်မှတ်ပေးခြင်း
     vfFilters.push(`subtitles=${safeSubtitlePath}:fontsdir=.:force_style='${assStyle}'`);
 
     const finalVfString = vfFilters.join(',');
     const videoOutput = path.join(outputDir, `final-recap-${Date.now()}.mp4`);
 
-                return new Promise((resolve, reject) => {
+
+        return new Promise((resolve, reject) => {
         console.log("🎬 FFmpeg ဖြင့် နောက်ဆုံးဗီဒီယိုကို ပေါင်းစပ်နေပါသည်...");
         ffmpeg()
             .input(videoInput)         
