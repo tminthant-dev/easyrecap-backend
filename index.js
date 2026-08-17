@@ -262,12 +262,12 @@ async function processVideoRecap(videoInput, options) {
     const subtitleFileName = path.join(outputDir, 'auto-sub-zg.srt');
     fs.writeFileSync(subtitleFileName, zgSub, 'utf8');
     
-    // ---------------------------------------------------------
-    // ၅။ FFmpeg Video Filters (လုံးဝ ရှင်းလင်းစွာ ပြင်ဆင်ထားသည်)
+        // ---------------------------------------------------------
+    // ၅။ FFmpeg Video Filters 
     // ---------------------------------------------------------
     let vfFilters = [];
     
-    // 🔴 1. Video မြန်နှုန်းကို သီးသန့် ချိန်ညှိခြင်း
+    // 1. Video မြန်နှုန်း
     vfFilters.push(`setpts=${maxStretchRatio}*(1/${vSpeed})*PTS`);
 
     let videoWidth = 1080;
@@ -288,7 +288,7 @@ async function processVideoRecap(videoInput, options) {
         vfFilters.push('hflip');
     }
     
-    // 🔴 2. Blur Box (Absolute Pixel ဖြင့် တိကျစွာ တွက်ချက်ခြင်း)
+    // 2. Blur Box ကို အရင်ဆုံး ဖန်တီးမည်
     if (options.isBlurred === 'true' || options.isBlurred === true) {
         const blurYPercent = parseFloat(options.blurY) || 80; 
         const boxW = Math.floor(videoWidth * 0.9);
@@ -296,30 +296,28 @@ async function processVideoRecap(videoInput, options) {
         const boxX = Math.floor((videoWidth - boxW) / 2);
         let boxY = Math.floor((videoHeight * (blurYPercent / 100)) - (boxH / 2));
         
-        // အောက်ခြေနှင့် အပေါ်ခြေသို့ ရောက်သွားပါက ပျောက်မသွားစေရန် ထိန်းချုပ်ခြင်း
         if (boxY < 0) boxY = 0;
         if (boxY + boxH > videoHeight) boxY = videoHeight - boxH;
 
         vfFilters.push(`drawbox=x=${boxX}:y=${boxY}:w=${boxW}:h=${boxH}:color=black@0.7:t=fill`); 
     }
 
-    // 🔴 3. စာတန်းထိုး 
+    // 3. စာတန်းထိုးကို Blur Box ရဲ့ အပေါ်ကနေ ထပ်တင်ရန် နောက်ဆုံးတွင် ထည့်မည်
     const primaryColor = hexToAssColor(options.textColor);
     const fontSize = (parseInt(options.captionSize) || 14) * 4; 
     
     const captionYPercent = parseFloat(options.captionY) || 80;
     let marginV = Math.floor(videoHeight * ((100 - captionYPercent) / 100));
     
-    // အောက်ခြေသို့ရောက်သွားပါက ပျောက်မသွားစေရန် ထိန်းချုပ်ခြင်း
     if (marginV < 0) marginV = 0;
-    if (marginV > videoHeight) marginV = videoHeight;
+    if (marginV > videoHeight - fontSize) marginV = videoHeight - fontSize - 20;
 
     const absoluteSrtPath = path.resolve(outputDir, 'auto-sub-zg.srt');
     const safeSubtitlePath = absoluteSrtPath.replace(/\\/g, '/').replace(/:/g, '\\:'); 
     
-    // OutlineColour အမည်းရောင်ကို သေချာပေါက် ပေါ်စေရန် ထည့်သွင်းထားသည်
     const assStyle = `Fontname=Zawgyi-One,FontSize=${fontSize},PrimaryColour=${primaryColor},OutlineColour=&H00000000,BackColour=&HFF000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=${marginV}`;
     
+    // subtitles filter ကို drawbox ရဲ့ အောက်မှာထားမှသာ စာတန်းက Blur ပေါ်မှာ ပေါ်လာမည်
     vfFilters.push(`subtitles=${safeSubtitlePath}:fontsdir=.:force_style='${assStyle}'`);
 
     const finalVfString = vfFilters.join(',');
