@@ -24,12 +24,8 @@ if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 if (!fs.existsSync('uploads')) fs.mkdirSync('uploads');
 if (!fs.existsSync('output')) fs.mkdirSync('output');
 
-// Multer Setup (Video များကို uploads/ ထဲတွင် ယာယီသိမ်းမည်)
 const upload = multer({ dest: uploadDir });
 
-// ---------------------------------------------------------
-// ၂။ Proxy နှင့် API သတ်မှတ်ခြင်း
-// ---------------------------------------------------------
 const proxyUrl = process.env.PROXY_URL; 
 if (proxyUrl) {
     const dispatcher = new ProxyAgent(proxyUrl);
@@ -43,9 +39,8 @@ const ai = new GoogleGenAI({
 import ffmpegStatic from 'ffmpeg-static';
 ffmpeg.setFfmpegPath(ffmpegStatic);
 
-
 // ---------------------------------------------------------
-// ၃။ Helper Functions များ
+// Helper Functions
 // ---------------------------------------------------------
 function addWavHeader(pcmBuffer, sampleRate = 24000) {
     const header = Buffer.alloc(44);
@@ -156,7 +151,7 @@ function hexToAssColor(hex) {
 }
 
 // ---------------------------------------------------------
-// ၄။ ပင်မ Automation Function (Dynamic Options ဖြင့်)
+// ၄။ ပင်မ Automation Function
 // ---------------------------------------------------------
 async function processVideoRecap(videoInput, options) {
     const extractedAudioPath = path.join(outputDir, 'extracted-original.mp3');
@@ -228,7 +223,7 @@ async function processVideoRecap(videoInput, options) {
     }
     if (maxStretchRatio > 2.0) maxStretchRatio = 2.0; 
 
-    // 🔴 1. Speed ကို ရယူခြင်း (မပါလာပါက 1.0 အဖြစ်ထားမည်)
+    // Playback Speed
     const speed = parseFloat(options.playbackSpeed) || 1.0;
 
     let pcmBuffers = []; 
@@ -249,7 +244,6 @@ async function processVideoRecap(videoInput, options) {
             currentTimeline = scaledStart;
         }
 
-        // 🔴 2. Speed ဖြင့် အချိုးချ၍ SRT အချိန်များကို ပြန်တွက်ခြင်း
         let spedUpTimeline = currentTimeline / speed;
         let spedUpDuration = a.newDuration / speed;
 
@@ -274,7 +268,6 @@ async function processVideoRecap(videoInput, options) {
     // ---------------------------------------------------------
     let vfFilters = [];
     
-    // 🔴 3. Video အမြန်နှုန်းကို Speed နှင့် အချိုးချ ချိန်ညှိခြင်း
     vfFilters.push(`setpts=${maxStretchRatio}*(1/${speed})*PTS`);
 
     let videoWidth = 1080;
@@ -295,27 +288,27 @@ async function processVideoRecap(videoInput, options) {
         vfFilters.push('hflip');
     }
     
+    // 🔴 1. Blur Box: 90% Width နှင့် မျက်နှာပြင် အလယ်မှာထားရှိမည်။ (Drag လုပ်ထားသော Y% အတိုင်း)
     if (options.isBlurred === 'true' || options.isBlurred === true) {
-        vfFilters.push('drawbox=x=0:y=ih*0.65:w=iw:h=150:color=black@0.9:t=fill'); 
+        const blurYPercent = parseFloat(options.blurY) || 80; 
+        vfFilters.push(`drawbox=x=(iw-w)/2:y=ih*(${blurYPercent}/100)-ih*0.06:w=iw*0.9:h=ih*0.12:color=black@0.7:t=fill`); 
     }
 
-    // 🔴 4. Font Size နှင့် အရောင်များကို သတ်မှတ်ခြင်း
     const primaryColor = hexToAssColor(options.textColor);
-    const backColor = hexToAssColor(options.bgColor);
-    const fontSize = parseInt(options.captionSize) || 22; // Default ကို 22 ထားမည်
-    
-    let marginV = 80; 
+    const backColor = '&HFF000000'; // နောက်ခံမပါဝင်ပါ
 
-    if (options.captionPosition === 'Top') {
-        marginV = videoHeight - 180; 
-    } else if (options.captionPosition === 'Middle') {
-        marginV = Math.floor(videoHeight / 2) - 30; 
-    }
+    // 🔴 Font Size ကို Frontend မှလာသော အရွယ်အစား (အသေးဆုံး 5px ထိ) အတိုင်းယူမည်
+    const fontSize = parseInt(options.captionSize) || 22; 
+    
+    // 🔴 2. Caption Position: Drag လုပ်ထားသော Y% အတိုင်း နေရာချမည်
+    const captionYPercent = parseFloat(options.captionY) || 80;
+    // အောက်ခြေမှစ၍ တွက်ချက်ခြင်းဖြစ်သဖြင့် (100 - Y%) ကိုယူရသည်
+    let marginV = Math.floor(videoHeight * ((100 - captionYPercent) / 100) - (fontSize / 2));
+    if (marginV < 0) marginV = 0;
 
     const absoluteSrtPath = path.resolve(outputDir, 'auto-sub-zg.srt');
     const safeSubtitlePath = absoluteSrtPath.replace(/\\/g, '/').replace(/:/g, '\\:'); 
     
-    // 🔴 FontSize ကို အစားထိုးထည့်သွင်းခြင်း
     const assStyle = `Fontname=Zawgyi-One,FontSize=${fontSize},PrimaryColour=${primaryColor},BackColour=${backColor},BorderStyle=3,Outline=1,Alignment=2,MarginV=${marginV}`;
     
     vfFilters.push(`subtitles=${safeSubtitlePath}:fontsdir=.:force_style='${assStyle}'`);
@@ -335,10 +328,8 @@ async function processVideoRecap(videoInput, options) {
                 '-max_muxing_queue_size 1024',
                 '-c:a aac',     
                 '-vf', finalVfString, 
-                
-                // 🔴 5. Audio အတွက် Speed ကို ချိန်ညှိပေးသော 'atempo' filter
+                // Speed မတူလျှင် Audio လိုက်ပြောင်းမည်
                 ...(speed !== 1.0 ? ['-af', `atempo=${speed}`] : []),
-                
                 '-map 0:v:0', 
                 '-map 1:a:0', 
                 '-shortest' 
