@@ -319,13 +319,18 @@ async function processVideoRecap(videoInput, options) {
     const finalVfString = vfFilters.join(',');
     const videoOutput = path.join(outputDir, `final-recap-${Date.now()}.mp4`);
 
-        return new Promise((resolve, reject) => {
+                return new Promise((resolve, reject) => {
         console.log("🎬 FFmpeg ဖြင့် နောက်ဆုံးဗီဒီယိုကို ပေါင်းစပ်နေပါသည်...");
         ffmpeg()
             .input(videoInput)         
             .input(generatedAudioPath) 
             .outputOptions([
                 '-c:v libx264',
+                // 🔴 Railway တွင် RAM မလောက်သည့် ပြဿနာကို ဖြေရှင်းရန် အောက်ပါ ၃ ကြောင်းကို ထည့်ပါ
+                '-preset ultrafast',          // ပေါင်းစပ်မှုကို အမြန်ဆုံးလုပ်စေပြီး RAM စားသက်သာစေသည်
+                '-threads 2',                 // CPU နှင့် RAM အသုံးပြုမှုကို ကန့်သတ်ထားမည်
+                '-max_muxing_queue_size 1024',// Memory ထဲတွင် ဗီဒီယိုဖိုင်များ ပုံနေခြင်းကို တားဆီးပေးမည်
+                
                 '-c:a aac',     
                 '-vf', finalVfString, 
                 '-map 0:v:0', 
@@ -336,6 +341,7 @@ async function processVideoRecap(videoInput, options) {
                 console.log("🛠️ FFmpeg Command လမ်းကြောင်း အောင်မြင်ပါသည်");
                 console.log("⏳ Video Rendering စတင်နေပါပြီ။ ခေတ္တစောင့်ဆိုင်းပေးပါ... (အချိန်အနည်းငယ် ကြာနိုင်ပါသည်)");
             })
+
                         // 🔴 အလုပ်လုပ်နေကြောင်း သိသာစေရန် Progress ထည့်သွင်းခြင်း (Time ဖြင့်ပြမည်)
             .on('progress', (progress) => {
                 // ရာခိုင်နှုန်းသည် Stretch လုပ်ထားသဖြင့် 100 ကျော်သွားနိုင်သောကြောင့် အချိန် (Timemark) ကိုသာ ပြသပါမည်
