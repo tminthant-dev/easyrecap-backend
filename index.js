@@ -295,12 +295,17 @@ async function processVideoRecap(videoInput, options) {
     }
 
     const primaryColor = hexToAssColor(options.textColor);
-    const backColor = '&HFF000000'; // Transparent
-    const fontSize = parseInt(options.captionSize) || 22; 
+    const backColor = '&HFF000000'; // နောက်ခံမပါဝင်ပါ
+
+    // 🔴 ဒီနေရာလေးကို အသစ်ပြင်လိုက်ပါ (အဟောင်းကို ဖျက်ပါ)
+    const baseSize = parseInt(options.captionSize) || 22; 
+    const fontSize = Math.floor(baseSize * 4.5); // Frontend CSS Size ကို 1080p Video အတွက် အချိုးချ မြှောက်ပေးခြင်း
     
+    // 🔴 2. Caption Position: Drag လုပ်ထားသော Y% အတိုင်း နေရာချမည်
     const captionYPercent = parseFloat(options.captionY) || 80;
     let marginV = Math.floor(videoHeight * ((100 - captionYPercent) / 100) - (fontSize / 2));
     if (marginV < 0) marginV = 0;
+
 
     const absoluteSrtPath = path.resolve(outputDir, 'auto-sub-zg.srt');
     const safeSubtitlePath = absoluteSrtPath.replace(/\\/g, '/').replace(/:/g, '\\:'); 
