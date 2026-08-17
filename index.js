@@ -263,7 +263,7 @@ async function processVideoRecap(videoInput, options) {
     const subtitleFileName = path.join(outputDir, 'auto-sub-zg.srt');
     fs.writeFileSync(subtitleFileName, zgSub, 'utf8');
     
-    // ---------------------------------------------------------
+        // ---------------------------------------------------------
     // ၅။ Frontend မှလာသော Settings များအရ FFmpeg Video Filters များကို ဖန်တီးခြင်း
     // ---------------------------------------------------------
     let vfFilters = [];
@@ -288,28 +288,25 @@ async function processVideoRecap(videoInput, options) {
         vfFilters.push('hflip');
     }
     
-    // 🔴 1. Blur Box: 90% Width နှင့် မျက်နှာပြင် အလယ်မှာထားရှိမည်။ (Drag လုပ်ထားသော Y% အတိုင်း)
+    // Blur Box: Frontend က ချိန်ထားတဲ့ Y% အတိုင်း နေရာချမည်
     if (options.isBlurred === 'true' || options.isBlurred === true) {
         const blurYPercent = parseFloat(options.blurY) || 80; 
         vfFilters.push(`drawbox=x=(iw-w)/2:y=ih*(${blurYPercent}/100)-ih*0.06:w=iw*0.9:h=ih*0.12:color=black@0.7:t=fill`); 
     }
 
     const primaryColor = hexToAssColor(options.textColor);
-    const backColor = '&HFF000000'; // နောက်ခံမပါဝင်ပါ
-
-    // 🔴 Font Size ကို Frontend မှလာသော အရွယ်အစား (အသေးဆုံး 5px ထိ) အတိုင်းယူမည်
+    const backColor = '&HFF000000'; // Transparent
     const fontSize = parseInt(options.captionSize) || 22; 
     
-    // 🔴 2. Caption Position: Drag လုပ်ထားသော Y% အတိုင်း နေရာချမည်
     const captionYPercent = parseFloat(options.captionY) || 80;
-    // အောက်ခြေမှစ၍ တွက်ချက်ခြင်းဖြစ်သဖြင့် (100 - Y%) ကိုယူရသည်
     let marginV = Math.floor(videoHeight * ((100 - captionYPercent) / 100) - (fontSize / 2));
     if (marginV < 0) marginV = 0;
 
     const absoluteSrtPath = path.resolve(outputDir, 'auto-sub-zg.srt');
     const safeSubtitlePath = absoluteSrtPath.replace(/\\/g, '/').replace(/:/g, '\\:'); 
     
-    const assStyle = `Fontname=Zawgyi-One,FontSize=${fontSize},PrimaryColour=${primaryColor},BackColour=${backColor},BorderStyle=3,Outline=1,Alignment=2,MarginV=${marginV}`;
+    // 🔴 ဤနေရာတွင် BorderStyle=1 သို့ ပြောင်းထားပါသည် (စာတန်းထိုး ပြန်ပေါ်လာစေရန်)
+    const assStyle = `Fontname=Zawgyi-One,FontSize=${fontSize},PrimaryColour=${primaryColor},BackColour=${backColor},BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=${marginV}`;
     
     vfFilters.push(`subtitles=${safeSubtitlePath}:fontsdir=.:force_style='${assStyle}'`);
 
