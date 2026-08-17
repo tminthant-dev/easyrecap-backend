@@ -10,6 +10,9 @@ import ffmpeg from 'fluent-ffmpeg';
 import rabbit from 'rabbit-node';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 
+// ---------------------------------------------------------
+// ၁။ API Server နှင့် Upload Directories တည်ဆောက်ခြင်း
+// ---------------------------------------------------------
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -144,6 +147,9 @@ function hexToAssColor(hex) {
     return '&H00FFFFFF'; 
 }
 
+// ---------------------------------------------------------
+// ၄။ ပင်မ Automation Function
+// ---------------------------------------------------------
 async function processVideoRecap(videoInput, options) {
     const extractedAudioPath = path.join(outputDir, 'extracted-original.mp3');
 
@@ -214,6 +220,7 @@ async function processVideoRecap(videoInput, options) {
     }
     if (maxStretchRatio > 2.0) maxStretchRatio = 2.0; 
 
+    // 🔴 Video နှင့် Voice Speed များကို ခွဲခြားရယူခြင်း
     const vSpeed = parseFloat(options.videoSpeed) || 1.0;
     const aSpeed = parseFloat(options.voiceSpeed) || 1.0;
 
@@ -235,6 +242,7 @@ async function processVideoRecap(videoInput, options) {
             currentTimeline = scaledStart;
         }
 
+        // 🔴 Voice Speed ဖြင့် စာတန်းထိုး အချိန်ကို အချိုးချတွက်ချက်ခြင်း
         let spedUpTimeline = currentTimeline / aSpeed;
         let spedUpDuration = a.newDuration / aSpeed;
 
@@ -255,10 +263,13 @@ async function processVideoRecap(videoInput, options) {
     fs.writeFileSync(subtitleFileName, zgSub, 'utf8');
     
     // ---------------------------------------------------------
-    // ၅။ FFmpeg Video Filters 
+    // ၅။ FFmpeg Video Filters (လုံးဝ ရှင်းလင်းစွာ ပြင်ဆင်ထားသည်)
     // ---------------------------------------------------------
     let vfFilters = [];
     
+    // 🔴 1. Video မြန်နှုန်းကို သီးသန့် ချိန်ညှိခြင်း
+    vfFilters.push(`setpts=${maxStretchRatio}*(1/${vSpeed})*PTS`);
+
     let videoWidth = 1080;
     let videoHeight = 1920; 
 
@@ -277,24 +288,37 @@ async function processVideoRecap(videoInput, options) {
         vfFilters.push('hflip');
     }
     
+    // 🔴 2. Blur Box (Absolute Pixel ဖြင့် တိကျစွာ တွက်ချက်ခြင်း)
     if (options.isBlurred === 'true' || options.isBlurred === true) {
         const blurYPercent = parseFloat(options.blurY) || 80; 
-        vfFilters.push(`drawbox=x=(iw-w)/2:y=ih*(${blurYPercent}/100)-ih*0.06:w=iw*0.9:h=ih*0.12:color=black@0.7:t=fill`); 
+        const boxW = Math.floor(videoWidth * 0.9);
+        const boxH = Math.floor(videoHeight * 0.12);
+        const boxX = Math.floor((videoWidth - boxW) / 2);
+        let boxY = Math.floor((videoHeight * (blurYPercent / 100)) - (boxH / 2));
+        
+        // အောက်ခြေနှင့် အပေါ်ခြေသို့ ရောက်သွားပါက ပျောက်မသွားစေရန် ထိန်းချုပ်ခြင်း
+        if (boxY < 0) boxY = 0;
+        if (boxY + boxH > videoHeight) boxY = videoHeight - boxH;
+
+        vfFilters.push(`drawbox=x=${boxX}:y=${boxY}:w=${boxW}:h=${boxH}:color=black@0.7:t=fill`); 
     }
 
+    // 🔴 3. စာတန်းထိုး 
     const primaryColor = hexToAssColor(options.textColor);
     const fontSize = (parseInt(options.captionSize) || 14) * 4; 
-    const captionYPercent = parseFloat(options.captionY) || 80;
     
-    // 🔴 တွက်ချက်မှုအသစ်: Alignment=8 (Top Center) သုံးပြီး အပေါ်ကနေ တိုက်ရိုက်တွက်ချမည်
-    let marginV = Math.floor(videoHeight * (captionYPercent / 100) - (fontSize / 2));
+    const captionYPercent = parseFloat(options.captionY) || 80;
+    let marginV = Math.floor(videoHeight * ((100 - captionYPercent) / 100));
+    
+    // အောက်ခြေသို့ရောက်သွားပါက ပျောက်မသွားစေရန် ထိန်းချုပ်ခြင်း
     if (marginV < 0) marginV = 0;
+    if (marginV > videoHeight) marginV = videoHeight;
 
     const absoluteSrtPath = path.resolve(outputDir, 'auto-sub-zg.srt');
     const safeSubtitlePath = absoluteSrtPath.replace(/\\/g, '/').replace(/:/g, '\\:'); 
     
-    // 🔴 Alignment=8 (Top) ကိုပြောင်းထားသဖြင့် MarginV သည် Y% အတိုင်း အတိအကျ ကျပါမည်
-    const assStyle = `Fontname=Zawgyi-One,FontSize=${fontSize},PrimaryColour=${primaryColor},BackColour=&HFF000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=8,MarginV=${marginV}`;
+    // OutlineColour အမည်းရောင်ကို သေချာပေါက် ပေါ်စေရန် ထည့်သွင်းထားသည်
+    const assStyle = `Fontname=Zawgyi-One,FontSize=${fontSize},PrimaryColour=${primaryColor},OutlineColour=&H00000000,BackColour=&HFF000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=${marginV}`;
     
     vfFilters.push(`subtitles=${safeSubtitlePath}:fontsdir=.:force_style='${assStyle}'`);
 
@@ -312,11 +336,15 @@ async function processVideoRecap(videoInput, options) {
                 '-threads 2',                 
                 '-max_muxing_queue_size 1024',
                 '-c:a aac',     
+                
+                // 🔴 Video Filters (Blur နှင့် စာတန်းထိုးများအားလုံး ပါဝင်သည်)
                 '-vf', finalVfString, 
-                // 🔴 Video & Voice Speed သီးသန့် ချိန်ညှိခြင်း
-                '-filter_complex', `[0:v]setpts=${maxStretchRatio}*(1/${vSpeed})*PTS[v];[1:a]atempo=${aSpeed}[a]`,
-                '-map', '[v]',
-                '-map', '[a]',
+                
+                // 🔴 Audio Speed (Voice Speed) ကို သီးသန့် ချိန်ညှိပေးသည်
+                ...(aSpeed !== 1.0 ? ['-af', `atempo=${aSpeed}`] : []),
+                
+                '-map 0:v:0', 
+                '-map 1:a:0', 
                 '-shortest' 
             ])
             .on('start', (commandLine) => {
@@ -342,6 +370,9 @@ async function processVideoRecap(videoInput, options) {
     });
 }
 
+// ---------------------------------------------------------
+// ၆။ Express API Routes
+// ---------------------------------------------------------
 app.use('/output', express.static(path.resolve('./output')));
 
 const historyFilePath = path.resolve('./history.json');
