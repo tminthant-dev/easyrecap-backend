@@ -39,9 +39,6 @@ const ai = new GoogleGenAI({
 import ffmpegStatic from 'ffmpeg-static';
 ffmpeg.setFfmpegPath(ffmpegStatic);
 
-// ---------------------------------------------------------
-// Helper Functions
-// ---------------------------------------------------------
 function addWavHeader(pcmBuffer, sampleRate = 24000) {
     const header = Buffer.alloc(44);
     header.write('RIFF', 0);
@@ -223,8 +220,9 @@ async function processVideoRecap(videoInput, options) {
     }
     if (maxStretchRatio > 2.0) maxStretchRatio = 2.0; 
 
-    // Playback Speed
-    const speed = parseFloat(options.playbackSpeed) || 1.0;
+    // 🔴 Video နှင့် Voice Speed များကို ခွဲခြားရယူခြင်း
+    const vSpeed = parseFloat(options.videoSpeed) || 1.0;
+    const aSpeed = parseFloat(options.voiceSpeed) || 1.0;
 
     let pcmBuffers = []; 
     let srtContent = '';
@@ -244,8 +242,9 @@ async function processVideoRecap(videoInput, options) {
             currentTimeline = scaledStart;
         }
 
-        let spedUpTimeline = currentTimeline / speed;
-        let spedUpDuration = a.newDuration / speed;
+        // 🔴 Voice Speed ဖြင့် စာတန်းထိုး အချိန်ကို အချိုးချတွက်ချက်ခြင်း
+        let spedUpTimeline = currentTimeline / aSpeed;
+        let spedUpDuration = a.newDuration / aSpeed;
 
         srtContent += generateDynamicSubtitles(a.text, spedUpTimeline, spedUpDuration, srtTracker);
         
@@ -263,12 +262,13 @@ async function processVideoRecap(videoInput, options) {
     const subtitleFileName = path.join(outputDir, 'auto-sub-zg.srt');
     fs.writeFileSync(subtitleFileName, zgSub, 'utf8');
     
-        // ---------------------------------------------------------
-    // ၅။ Frontend မှလာသော Settings များအရ FFmpeg Video Filters များကို ဖန်တီးခြင်း
+    // ---------------------------------------------------------
+    // ၅။ FFmpeg Video Filters (လုံးဝ ရှင်းလင်းစွာ ပြင်ဆင်ထားသည်)
     // ---------------------------------------------------------
     let vfFilters = [];
     
-    vfFilters.push(`setpts=${maxStretchRatio}*(1/${speed})*PTS`);
+    // 🔴 1. Video မြန်နှုန်းကို သီးသန့် ချိန်ညှိခြင်း
+    vfFilters.push(`setpts=${maxStretchRatio}*(1/${vSpeed})*PTS`);
 
     let videoWidth = 1080;
     let videoHeight = 1920; 
@@ -288,30 +288,25 @@ async function processVideoRecap(videoInput, options) {
         vfFilters.push('hflip');
     }
     
-    // Blur Box: Frontend က ချိန်ထားတဲ့ Y% အတိုင်း နေရာချမည်
+    // 🔴 2. Blur Box 
     if (options.isBlurred === 'true' || options.isBlurred === true) {
         const blurYPercent = parseFloat(options.blurY) || 80; 
         vfFilters.push(`drawbox=x=(iw-w)/2:y=ih*(${blurYPercent}/100)-ih*0.06:w=iw*0.9:h=ih*0.12:color=black@0.7:t=fill`); 
     }
 
+    // 🔴 3. စာတန်းထိုး (Video Resolution ပေါ်မူတည်၍ Size ကို ၄ ဆ မြှောက်ထားသည်)
     const primaryColor = hexToAssColor(options.textColor);
-    const backColor = '&HFF000000'; // နောက်ခံမပါဝင်ပါ
-
-    // 🔴 ဒီနေရာလေးကို အသစ်ပြင်လိုက်ပါ (အဟောင်းကို ဖျက်ပါ)
-    const baseSize = parseInt(options.captionSize) || 22; 
-    const fontSize = Math.floor(baseSize * 4.5); // Frontend CSS Size ကို 1080p Video အတွက် အချိုးချ မြှောက်ပေးခြင်း
+    const fontSize = (parseInt(options.captionSize) || 14) * 4; 
     
-    // 🔴 2. Caption Position: Drag လုပ်ထားသော Y% အတိုင်း နေရာချမည်
     const captionYPercent = parseFloat(options.captionY) || 80;
     let marginV = Math.floor(videoHeight * ((100 - captionYPercent) / 100) - (fontSize / 2));
     if (marginV < 0) marginV = 0;
 
-
     const absoluteSrtPath = path.resolve(outputDir, 'auto-sub-zg.srt');
     const safeSubtitlePath = absoluteSrtPath.replace(/\\/g, '/').replace(/:/g, '\\:'); 
     
-    // 🔴 ဤနေရာတွင် BorderStyle=1 သို့ ပြောင်းထားပါသည် (စာတန်းထိုး ပြန်ပေါ်လာစေရန်)
-    const assStyle = `Fontname=Zawgyi-One,FontSize=${fontSize},PrimaryColour=${primaryColor},BackColour=${backColor},BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=${marginV}`;
+    // 🔴 BorderStyle=1, Outline=2, Shadow=1 ဖြင့် စာတန်းထိုးကို သေချာပေါက် ပေါ်စေမည်
+    const assStyle = `Fontname=Zawgyi-One,FontSize=${fontSize},PrimaryColour=${primaryColor},BackColour=&HFF000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=${marginV}`;
     
     vfFilters.push(`subtitles=${safeSubtitlePath}:fontsdir=.:force_style='${assStyle}'`);
 
@@ -329,9 +324,13 @@ async function processVideoRecap(videoInput, options) {
                 '-threads 2',                 
                 '-max_muxing_queue_size 1024',
                 '-c:a aac',     
+                
+                // 🔴 Video Filters (Blur နှင့် စာတန်းထိုးများအားလုံး ပါဝင်သည်)
                 '-vf', finalVfString, 
-                // Speed မတူလျှင် Audio လိုက်ပြောင်းမည်
-                ...(speed !== 1.0 ? ['-af', `atempo=${speed}`] : []),
+                
+                // 🔴 Audio Speed (Voice Speed) ကို သီးသန့် ချိန်ညှိပေးသည်
+                ...(aSpeed !== 1.0 ? ['-af', `atempo=${aSpeed}`] : []),
+                
                 '-map 0:v:0', 
                 '-map 1:a:0', 
                 '-shortest' 
