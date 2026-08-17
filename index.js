@@ -143,9 +143,8 @@ function extractAudioFromVideo(videoPath, audioOutputPath) {
     });
 }
 
-// React မှလာသော Hex အရောင် (ဥပမာ #ffffff) ကို FFmpeg ASS Format (BGR) သို့ ပြောင်းပေးသည့် Function
 function hexToAssColor(hex) {
-    if (!hex || hex === 'transparent') return '&HFF000000'; // Invisible
+    if (!hex || hex === 'transparent') return '&HFF000000'; 
     hex = hex.replace('#', '');
     if (hex.length === 6) {
         let r = hex.substring(0, 2);
@@ -153,7 +152,7 @@ function hexToAssColor(hex) {
         let b = hex.substring(4, 6);
         return `&H00${b}${g}${r}`; 
     }
-    return '&H00FFFFFF'; // Default White
+    return '&H00FFFFFF'; 
 }
 
 // ---------------------------------------------------------
@@ -192,8 +191,7 @@ async function processVideoRecap(videoInput, options) {
     let audioDatas = [];
     const tts = new MsEdgeTTS();
     
-    // Frontend မှရွေးချယ်လိုက်သော အသံကို ထည့်သွင်းခြင်း
-    let voiceModel = 'my-MM-ThihaNeural'; // Default
+    let voiceModel = 'my-MM-ThihaNeural'; 
     if (options.aiVoice && options.aiVoice.includes('Female')) voiceModel = 'my-MM-NilarNeural';
     
     await tts.setMetadata(voiceModel, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
@@ -230,6 +228,9 @@ async function processVideoRecap(videoInput, options) {
     }
     if (maxStretchRatio > 2.0) maxStretchRatio = 2.0; 
 
+    // 🔴 1. Speed ကို ရယူခြင်း (မပါလာပါက 1.0 အဖြစ်ထားမည်)
+    const speed = parseFloat(options.playbackSpeed) || 1.0;
+
     let pcmBuffers = []; 
     let srtContent = '';
     let currentTimeline = 0; 
@@ -248,7 +249,12 @@ async function processVideoRecap(videoInput, options) {
             currentTimeline = scaledStart;
         }
 
-        srtContent += generateDynamicSubtitles(a.text, currentTimeline, a.newDuration, srtTracker);
+        // 🔴 2. Speed ဖြင့် အချိုးချ၍ SRT အချိန်များကို ပြန်တွက်ခြင်း
+        let spedUpTimeline = currentTimeline / speed;
+        let spedUpDuration = a.newDuration / speed;
+
+        srtContent += generateDynamicSubtitles(a.text, spedUpTimeline, spedUpDuration, srtTracker);
+        
         pcmBuffers.push(a.ttsBuffer);
         currentTimeline += a.newDuration;
     }
@@ -263,13 +269,13 @@ async function processVideoRecap(videoInput, options) {
     const subtitleFileName = path.join(outputDir, 'auto-sub-zg.srt');
     fs.writeFileSync(subtitleFileName, zgSub, 'utf8');
     
-        // ---------------------------------------------------------
+    // ---------------------------------------------------------
     // ၅။ Frontend မှလာသော Settings များအရ FFmpeg Video Filters များကို ဖန်တီးခြင်း
     // ---------------------------------------------------------
     let vfFilters = [];
     
-    // အသံနှင့် ရုပ် ကိုက်ညီစေရန်
-    vfFilters.push(`setpts=${maxStretchRatio}*PTS`);
+    // 🔴 3. Video အမြန်နှုန်းကို Speed နှင့် အချိုးချ ချိန်ညှိခြင်း
+    vfFilters.push(`setpts=${maxStretchRatio}*(1/${speed})*PTS`);
 
     let videoWidth = 1080;
     let videoHeight = 1920; 
@@ -285,20 +291,18 @@ async function processVideoRecap(videoInput, options) {
     vfFilters.push(`scale=${videoWidth}:${videoHeight}:force_original_aspect_ratio=increase`);
     vfFilters.push(`crop=${videoWidth}:${videoHeight}`);
     
-    // ၂။ ဗီဒီယိုလှန်ခြင်း
     if (options.isFlipped === 'true' || options.isFlipped === true) {
         vfFilters.push('hflip');
     }
     
-    // ၃။ မူရင်းစာတန်းထိုးအား ဖုံးအုပ်ရန် (Black Box နေရာကို ပြင်ထားပါသည်)
     if (options.isBlurred === 'true' || options.isBlurred === true) {
-        // Letterbox ဗီဒီယိုများအတွက် စာတန်းက အလယ်နားရောက်နေတတ်၍ y နေရာကို ih*0.65 သို့ ရွှေ့ပေးထားပါသည်
         vfFilters.push('drawbox=x=0:y=ih*0.65:w=iw:h=150:color=black@0.9:t=fill'); 
     }
 
-    // ၄။ စာတန်းထိုး အရောင်၊ နောက်ခံနှင့် နေရာချထားမှု
+    // 🔴 4. Font Size နှင့် အရောင်များကို သတ်မှတ်ခြင်း
     const primaryColor = hexToAssColor(options.textColor);
     const backColor = hexToAssColor(options.bgColor);
+    const fontSize = parseInt(options.captionSize) || 22; // Default ကို 22 ထားမည်
     
     let marginV = 80; 
 
@@ -308,52 +312,48 @@ async function processVideoRecap(videoInput, options) {
         marginV = Math.floor(videoHeight / 2) - 30; 
     }
 
-    // 🔴 ၅။ စာတန်းထိုး ဖိုင်လမ်းကြောင်းကို Absolute Path သို့ ပြောင်းပေးခြင်း (အရေးကြီးသည်)
     const absoluteSrtPath = path.resolve(outputDir, 'auto-sub-zg.srt');
     const safeSubtitlePath = absoluteSrtPath.replace(/\\/g, '/').replace(/:/g, '\\:'); 
     
-    const assStyle = `Fontname=Zawgyi-One,FontSize=22,PrimaryColour=${primaryColor},BackColour=${backColor},BorderStyle=3,Outline=1,Alignment=2,MarginV=${marginV}`;
+    // 🔴 FontSize ကို အစားထိုးထည့်သွင်းခြင်း
+    const assStyle = `Fontname=Zawgyi-One,FontSize=${fontSize},PrimaryColour=${primaryColor},BackColour=${backColor},BorderStyle=3,Outline=1,Alignment=2,MarginV=${marginV}`;
     
-    // fontsdir ကို Root Directory အဖြစ် သေချာစွာ သတ်မှတ်ပေးခြင်း
     vfFilters.push(`subtitles=${safeSubtitlePath}:fontsdir=.:force_style='${assStyle}'`);
 
     const finalVfString = vfFilters.join(',');
     const videoOutput = path.join(outputDir, `final-recap-${Date.now()}.mp4`);
 
-
-        return new Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => {
         console.log("🎬 FFmpeg ဖြင့် နောက်ဆုံးဗီဒီယိုကို ပေါင်းစပ်နေပါသည်...");
         ffmpeg()
             .input(videoInput)         
             .input(generatedAudioPath) 
             .outputOptions([
                 '-c:v libx264',
-                // 🔴 Railway တွင် RAM မလောက်သည့် ပြဿနာကို ဖြေရှင်းရန် အောက်ပါ ၃ ကြောင်းကို ထည့်ပါ
-                '-preset ultrafast',          // ပေါင်းစပ်မှုကို အမြန်ဆုံးလုပ်စေပြီး RAM စားသက်သာစေသည်
-                '-threads 2',                 // CPU နှင့် RAM အသုံးပြုမှုကို ကန့်သတ်ထားမည်
-                '-max_muxing_queue_size 1024',// Memory ထဲတွင် ဗီဒီယိုဖိုင်များ ပုံနေခြင်းကို တားဆီးပေးမည်
-                
+                '-preset ultrafast',          
+                '-threads 2',                 
+                '-max_muxing_queue_size 1024',
                 '-c:a aac',     
                 '-vf', finalVfString, 
+                
+                // 🔴 5. Audio အတွက် Speed ကို ချိန်ညှိပေးသော 'atempo' filter
+                ...(speed !== 1.0 ? ['-af', `atempo=${speed}`] : []),
+                
                 '-map 0:v:0', 
                 '-map 1:a:0', 
                 '-shortest' 
             ])
             .on('start', (commandLine) => {
                 console.log("🛠️ FFmpeg Command လမ်းကြောင်း အောင်မြင်ပါသည်");
-                console.log("⏳ Video Rendering စတင်နေပါပြီ။ ခေတ္တစောင့်ဆိုင်းပေးပါ... (အချိန်အနည်းငယ် ကြာနိုင်ပါသည်)");
+                console.log("⏳ Video Rendering စတင်နေပါပြီ... (အချိန်အနည်းငယ် ကြာနိုင်ပါသည်)");
             })
-
-                        // 🔴 အလုပ်လုပ်နေကြောင်း သိသာစေရန် Progress ထည့်သွင်းခြင်း (Time ဖြင့်ပြမည်)
             .on('progress', (progress) => {
-                // ရာခိုင်နှုန်းသည် Stretch လုပ်ထားသဖြင့် 100 ကျော်သွားနိုင်သောကြောင့် အချိန် (Timemark) ကိုသာ ပြသပါမည်
                 if (progress.timemark) {
                     process.stdout.write(`\r🔄 ဖြတ်တောက်ပေါင်းစပ်နေသည်... (ပြီးစီးသည့်အပိုင်း - ${progress.timemark})   `);
                 } else {
                     process.stdout.write(`\r🔄 Processing...   `);
                 }
             })
-
             .save(videoOutput)
             .on('end', () => {
                 console.log(`\n🎉 အောင်မြင်ပါသည်။ ပြီးစီးသွားသော ဗီဒီယို: ${videoOutput}`);
@@ -364,13 +364,11 @@ async function processVideoRecap(videoInput, options) {
                 reject(err);
             });
     });
-
 }
 
 // ---------------------------------------------------------
 // ၆။ Express API Routes
 // ---------------------------------------------------------
-// 🔴 6.0 - Frontend မှ ဗီဒီယိုများကို တိုက်ရိုက် ဖွင့်ကြည့်နိုင်/ဒေါင်းလုဒ်လုပ်နိုင်ရန် Static Folder ဖွင့်ပေးခြင်း
 app.use('/output', express.static(path.resolve('./output')));
 
 const historyFilePath = path.resolve('./history.json');
@@ -406,11 +404,8 @@ app.post('/api/generate-recap', upload.single('videoFile'), async (req, res) => 
 
         const finalVideoPath = await processVideoRecap(videoInputPath, options);
 
-        // 🔴 ဖိုင်လမ်းကြောင်းအရှည်ကြီးအစား Frontend မှ ယူသုံးနိုင်သော Network URL အဖြစ် ပြောင်းပေးခြင်း
         const fileName = path.basename(finalVideoPath);
-        // အသစ် (Dynamic URL)
-        const videoServeUrl = `${req.protocol}://${req.get('host')}/output/${fileName}`;
-
+        const videoServeUrl = `https://${req.get('host')}/output/${fileName}`;
 
         const history = JSON.parse(fs.readFileSync(historyFilePath));
         const newProject = {
@@ -420,7 +415,7 @@ app.post('/api/generate-recap', upload.single('videoFile'), async (req, res) => 
             duration: "Generated",
             status: "Completed",
             thumbnail: "from-purple-600 to-indigo-700",
-            videoUrl: videoServeUrl // URL အသစ်ကိုသာ သိမ်းမည်
+            videoUrl: videoServeUrl 
         };
         
         history.unshift(newProject); 
@@ -439,7 +434,6 @@ app.post('/api/generate-recap', upload.single('videoFile'), async (req, res) => 
 });
 
 const PORT = process.env.PORT || 5000;
-// Railway တွင် အလုပ်လုပ်ရန် '0.0.0.0' ကို မဖြစ်မနေ ထည့်ပေးရပါမည်
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Backend API Server running at Port ${PORT}`);
 });
