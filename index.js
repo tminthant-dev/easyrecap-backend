@@ -163,11 +163,7 @@ async function processVideoRecap(videoInput, options) {
 
     const aiResponse = await ai.models.generateContent({
         model: 'gemini-3.7-flash', 
-        contents: [
-            { inlineData: { data: audioBase64, mimeType: 'audio/mp3' } },
-            promptText
-        ],
-        // 🔴 Safety Policy ကြောင့် Block မလုပ်စေရန် အကုန်ပိတ်ထားခြင်း
+        contents: [{ inlineData: { data: audioBase64, mimeType: 'audio/mp3' } }, promptText],
         config: {
             safetySettings: [
                 { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
@@ -178,11 +174,10 @@ async function processVideoRecap(videoInput, options) {
         }
     });
 
-    // 🔴 Server မကျစေရန်နှင့် Error အတိအကျသိရန် စစ်ဆေးခြင်း
     if (!aiResponse || !aiResponse.text) {
-        console.error("❌ Gemini API Response တွင် စာသားမပါဝင်ပါ။ Response data:", JSON.stringify(aiResponse, null, 2));
-        throw new Error("Gemini AI မှ စာသားပြန်မပေးပါ။ (Safety Policy ငြိနေသေးခြင်း သို့မဟုတ် Audio ဖတ်မရခြင်း ဖြစ်နိုင်ပါသည်)");
+        throw new Error("Gemini AI မှ စာသားပြန်မပေးပါ။");
     }
+
     let responseText = aiResponse.text.trim();
     responseText = responseText.replace(/```json/g, '').replace(/```/g, ''); 
     const translatedSegments = JSON.parse(responseText);
@@ -219,19 +214,15 @@ async function processVideoRecap(videoInput, options) {
     let assDialogues = ''; 
     let currentTimeline = 0; 
 
-    // 🔴 1. အသံကို စောင့်ခိုင်းသည့် ယခင်အမှားကို ပြင်ဆင်ထားသော အပိုင်းသစ်
+    // 🔴 1. အသံကို မူရင်း ဗီဒီယိုအချိန်နှင့် ၁၀၀% တိကျစွာ ပြန်လည်ချိန်ညှိခြင်း
     for (let i = 0; i < audioDatas.length; i++) {
         let a = audioDatas[i];
-        
-        // မူလနေရာနှင့် လက်ရှိ Timeline ကို နှိုင်းယှဉ်မည် (Stretch Ratio မပါတော့ပါ)
         let intendedStart = a.start;
-        let actualStart = Math.max(intendedStart, currentTimeline);
-        let gap = actualStart - currentTimeline;
+        if (intendedStart < currentTimeline) intendedStart = currentTimeline;
 
-        // 🔴 အရေးကြီးဆုံး: အသံများကြား တိတ်ဆိတ်နေမည့်အချိန်ကို အများဆုံး "၁ စက္ကန့် (1.0)" သာ ခွင့်ပြုပါမည်!
-        // သို့မှသာ အသံရပ်မသွားဘဲ ဇာတ်လမ်းကို ဆက်တိုက် ပြောသွားမည်ဖြစ်သည်။
-        if (gap > 1.0) gap = 1.0; 
-
+        // ဗီဒီယိုထဲတွင် တိတ်ဆိတ်နေသော အချိန်များ (Gaps) အား မူရင်းအတိုင်း ထားရှိပေးမည်
+        let gap = intendedStart - currentTimeline;
+        
         if (gap > 0) {
             let silentBytes = Math.floor(gap * 48000);
             if (silentBytes % 2 !== 0) silentBytes -= 1;
@@ -252,7 +243,7 @@ async function processVideoRecap(videoInput, options) {
     const generatedAudioPath = path.join(outputDir, 'myanmar-dub.wav');
     fs.writeFileSync(generatedAudioPath, addWavHeader(fullPcmBuffer, 24000));
 
-    // အသံ Speed ကို သီးသန့် အရင်ပြောင်းမည်
+    // အသံ Speed ပြောင်းခြင်း
     const spedUpAudioPath = path.join(outputDir, 'sped-up-audio.wav');
     await new Promise((resolve, reject) => {
         ffmpeg(generatedAudioPath)
@@ -271,6 +262,7 @@ async function processVideoRecap(videoInput, options) {
     else if (options.aspectRatio === '1:1') { videoWidth = 1080; videoHeight = 1080; }
 
     const primaryColor = hexToAssColor(options.textColor);
+    // 🔴 Size ကို 1080p Resolution တွင် သေချာမြင်ရစေရန်
     const fontSize = (parseInt(options.captionSize) || 12) * 6; 
     const captionYPercent = parseFloat(options.captionY) || 80;
     
@@ -299,7 +291,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     let vfFilters = [];
     
-    // 🔴 2. Video Speed ကို MaxStretch မပါဘဲ တိကျစွာ ပြောင်းလဲခြင်း
+    // Video Speed ပြောင်းခြင်း
     vfFilters.push(`setpts=(1/${vSpeed})*PTS`);
     
     vfFilters.push(`scale=${videoWidth}:${videoHeight}:force_original_aspect_ratio=increase`);
