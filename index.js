@@ -314,13 +314,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     const videoOutput = path.join(outputDir, `final-recap-${Date.now()}.mp4`);
 
     return new Promise((resolve, reject) => {
-        console.log("🎬 FFmpeg ဖြင့် နောက်ဆုံးဗီဒီယိုကို ပေါင်းစပ်နေပါသည်...");
+        console.log("🎬 FFmpeg Rendering စတင်နေပါသည်...");
         ffmpeg()
             .input(videoInput)         
             .input(generatedAudioPath) 
             .complexFilter([
                 `[0:v]${videoFilterString}[v]`,
-                `[1:a]${audioFilterString}[a]`
+                `[1:a]atempo=${aSpeed},aresample=async=1:min_hard_comp=0.100000:first_pts=0[a]`
             ])
             .outputOptions([
                 '-map [v]', 
@@ -330,22 +330,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 '-threads 2',                 
                 '-max_muxing_queue_size 1024',
                 '-c:a aac',
-                '-async 1',
-                '-shortest' 
+                '-shortest',
+                // 🔴 အရေးကြီးဆုံး: Video နဲ့ Audio ကို Sync အတင်းညှိခြင်း
+                '-fflags +genpts',
+                '-r 30' 
             ])
-            .on('start', (commandLine) => console.log("⏳ Video Rendering စတင်နေပါပြီ..."))
-            .on('progress', (progress) => {
-                if (progress.timemark) {
-                    process.stdout.write(`\r🔄 Processing: ${progress.timemark}   `);
-                }
-            })
+            .on('start', (commandLine) => console.log("⏳ Rendering..."))
             .save(videoOutput)
             .on('end', () => {
-                console.log(`\n🎉 အောင်မြင်ပါသည်။ ပြီးစီးသွားသော ဗီဒီယို: ${videoOutput}`);
+                console.log(`\n🎉 အောင်မြင်ပါသည်။`);
                 resolve(videoOutput);
             })
             .on('error', (err) => {
-                console.error("\n❌ FFmpeg အမှားအယွင်း:", err.message);
+                console.error("\n❌ FFmpeg Error:", err.message);
                 reject(err);
             });
     });
