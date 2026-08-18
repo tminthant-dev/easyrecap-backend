@@ -183,9 +183,6 @@ async function processVideoRecap(videoInput, options) {
         console.error("❌ Gemini API Response တွင် စာသားမပါဝင်ပါ။ Response data:", JSON.stringify(aiResponse, null, 2));
         throw new Error("Gemini AI မှ စာသားပြန်မပေးပါ။ (Safety Policy ငြိနေသေးခြင်း သို့မဟုတ် Audio ဖတ်မရခြင်း ဖြစ်နိုင်ပါသည်)");
     }
-
-    let responseText = aiResponse.text.trim();
-
     let responseText = aiResponse.text.trim();
     responseText = responseText.replace(/```json/g, '').replace(/```/g, ''); 
     const translatedSegments = JSON.parse(responseText);
