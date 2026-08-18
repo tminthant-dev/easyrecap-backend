@@ -29,7 +29,6 @@ if (proxyUrl) {
 }
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
 ffmpeg.setFfmpegPath(ffmpegStatic);
 
 // ---------------------------------------------------------
@@ -67,7 +66,6 @@ function convertMp3ToPcm(mp3Path) {
     });
 }
 
-// 🔴 ASS Format အတွက် အချိန် Format ပြောင်းခြင်း (SRT နှင့် မတူပါ)
 function formatAssTime(seconds) {
     const date = new Date(Math.floor(seconds * 1000));
     const h = date.getUTCHours();
@@ -77,7 +75,6 @@ function formatAssTime(seconds) {
     return `${h}:${m}:${s}.${cs}`;
 }
 
-// 🔴 ASS format အတွက် စာတန်းထိုး လိုင်းများ ဖန်တီးခြင်း
 function generateAssDialogue(text, currentTimeline, durationInSeconds) {
     let blocks = '';
     let cleanText = text.replace(/\n/g, ' ').trim();
@@ -139,7 +136,7 @@ function hexToAssColor(hex) {
         let r = hex.substring(0, 2);
         let g = hex.substring(2, 4);
         let b = hex.substring(4, 6);
-        return `&H00${b}${g}${r}`; // ASS format uses BBGGRR
+        return `&H00${b}${g}${r}`; 
     }
     return '&H00FFFFFF'; 
 }
@@ -166,10 +163,7 @@ async function processVideoRecap(videoInput, options) {
 
     const aiResponse = await ai.models.generateContent({
         model: 'gemini-3.7-flash', 
-        contents: [
-            { inlineData: { data: audioBase64, mimeType: 'audio/mp3' } },
-            promptText
-        ]
+        contents: [{ inlineData: { data: audioBase64, mimeType: 'audio/mp3' } }, promptText]
     });
 
     let responseText = aiResponse.text.trim();
@@ -187,7 +181,6 @@ async function processVideoRecap(videoInput, options) {
 
     for (let i = 0; i < translatedSegments.length; i++) {
         let segment = translatedSegments[i];
-        
         const tempSegmentDir = path.join(outputDir, `segment-folder-${i}`);
         if (!fs.existsSync(tempSegmentDir)) fs.mkdirSync(tempSegmentDir, { recursive: true });
         
@@ -199,23 +192,8 @@ async function processVideoRecap(videoInput, options) {
         if (fs.existsSync(tempSegmentDir)) fs.rmdirSync(tempSegmentDir);
         
         let duration = buffer.length / 48000; 
-        audioDatas.push({
-            start: segment.start,
-            end: segment.end,
-            text: segment.text,
-            ttsBuffer: buffer, 
-            newDuration: duration
-        });
+        audioDatas.push({ start: segment.start, end: segment.end, text: segment.text, ttsBuffer: buffer, newDuration: duration });
     }
-
-    let maxStretchRatio = 1.0;
-    for (let a of audioDatas) {
-        let origDur = a.end - a.start;
-        if (origDur < 0.5) origDur = 0.5; 
-        let ratio = a.newDuration / origDur;
-        if (ratio > maxStretchRatio) maxStretchRatio = ratio;
-    }
-    if (maxStretchRatio > 2.0) maxStretchRatio = 2.0; 
 
     const vSpeed = parseFloat(options.videoSpeed) || 1.0;
     const aSpeed = parseFloat(options.voiceSpeed) || 1.0;
@@ -224,21 +202,26 @@ async function processVideoRecap(videoInput, options) {
     let assDialogues = ''; 
     let currentTimeline = 0; 
 
-    // 🔴 Audio Buffering - အသံကို ကြိုတင်တွက်ချက်ခြင်း
+    // 🔴 1. အသံကို စောင့်ခိုင်းသည့် ယခင်အမှားကို ပြင်ဆင်ထားသော အပိုင်းသစ်
     for (let i = 0; i < audioDatas.length; i++) {
         let a = audioDatas[i];
-        let scaledStart = a.start * maxStretchRatio;
-        if (scaledStart < currentTimeline) scaledStart = currentTimeline;
+        
+        // မူလနေရာနှင့် လက်ရှိ Timeline ကို နှိုင်းယှဉ်မည် (Stretch Ratio မပါတော့ပါ)
+        let intendedStart = a.start;
+        let actualStart = Math.max(intendedStart, currentTimeline);
+        let gap = actualStart - currentTimeline;
 
-        let gap = scaledStart - currentTimeline;
+        // 🔴 အရေးကြီးဆုံး: အသံများကြား တိတ်ဆိတ်နေမည့်အချိန်ကို အများဆုံး "၁ စက္ကန့် (1.0)" သာ ခွင့်ပြုပါမည်!
+        // သို့မှသာ အသံရပ်မသွားဘဲ ဇာတ်လမ်းကို ဆက်တိုက် ပြောသွားမည်ဖြစ်သည်။
+        if (gap > 1.0) gap = 1.0; 
+
         if (gap > 0) {
             let silentBytes = Math.floor(gap * 48000);
             if (silentBytes % 2 !== 0) silentBytes -= 1;
             pcmBuffers.push(Buffer.alloc(silentBytes));
-            currentTimeline = scaledStart;
+            currentTimeline += gap;
         }
 
-        // Speed မြန်ထားသည့်အတိုင်း Timeline တွက်ချက်ခြင်း
         let spedUpTimeline = currentTimeline / aSpeed;
         let spedUpDuration = a.newDuration / aSpeed;
 
@@ -252,8 +235,7 @@ async function processVideoRecap(videoInput, options) {
     const generatedAudioPath = path.join(outputDir, 'myanmar-dub.wav');
     fs.writeFileSync(generatedAudioPath, addWavHeader(fullPcmBuffer, 24000));
 
-    // 🔴 1. Audio Speed (Voice Speed) ကို အရင်ဆုံး වෙනသီးသန့် Temp File သို့ ပြောင်းမည်
-    // ဒါမှသာ Video နဲ့ တွဲတဲ့အခါ Sync လုံးဝမလွဲတော့မှာ ဖြစ်ပါတယ်။
+    // အသံ Speed ကို သီးသန့် အရင်ပြောင်းမည်
     const spedUpAudioPath = path.join(outputDir, 'sped-up-audio.wav');
     await new Promise((resolve, reject) => {
         ffmpeg(generatedAudioPath)
@@ -263,6 +245,9 @@ async function processVideoRecap(videoInput, options) {
             .on('error', (err) => reject(err));
     });
 
+    // ---------------------------------------------------------
+    // FFmpeg Filter & Subtitle Configuration 
+    // ---------------------------------------------------------
     let videoWidth = 1080;
     let videoHeight = 1920; 
     if (options.aspectRatio === '16:9') { videoWidth = 1920; videoHeight = 1080; } 
@@ -296,8 +281,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     fs.writeFileSync(subtitleFileName, zgSub, 'utf8');
 
     let vfFilters = [];
-    // Video Speed 
-    vfFilters.push(`setpts=${maxStretchRatio}*(1/${vSpeed})*PTS`);
+    
+    // 🔴 2. Video Speed ကို MaxStretch မပါဘဲ တိကျစွာ ပြောင်းလဲခြင်း
+    vfFilters.push(`setpts=(1/${vSpeed})*PTS`);
+    
     vfFilters.push(`scale=${videoWidth}:${videoHeight}:force_original_aspect_ratio=increase`);
     vfFilters.push(`crop=${videoWidth}:${videoHeight}`);
     if (options.isFlipped === 'true' || options.isFlipped === true) vfFilters.push('hflip');
@@ -326,20 +313,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         console.log("🎬 FFmpeg ဖြင့် နောက်ဆုံးဗီဒီယိုကို ပေါင်းစပ်နေပါသည်...");
         ffmpeg()
             .input(videoInput)         
-            .input(spedUpAudioPath) // 🔴 2. ပြင်ဆင်ပြီးသား အသံဖိုင် (Sped-up Audio) ကိုသာ သုံးမည်
+            .input(spedUpAudioPath) 
             .complexFilter([
                 `[0:v]${videoFilterString}[v]`
             ])
             .outputOptions([
                 '-map [v]', 
-                '-map 1:a', // 🔴 3. တွက်ချက်စရာမလိုတော့ဘဲ အသံကို တိုက်ရိုက်ယူမည်
+                '-map 1:a', 
                 '-c:v libx264',
                 '-preset ultrafast',          
                 '-threads 2',                 
                 '-max_muxing_queue_size 1024',
                 '-c:a aac',
-                // 🔴 4. Shortest ကို ဖြုတ်လိုက်ပြီး၊ Video ရပ်သွားခြင်းကို ကာကွယ်မည်
-                // (Video သို့မဟုတ် Audio နှစ်ခုထဲက ပိုရှည်တဲ့တစ်ခု အဆုံးအထိ ဆက်သွားပါမည်)
+                '-shortest' 
             ])
             .on('start', (commandLine) => console.log("⏳ Video Rendering စတင်နေပါပြီ..."))
             .on('progress', (progress) => {
