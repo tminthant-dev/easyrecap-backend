@@ -262,7 +262,7 @@ async function processVideoRecap(videoInput, options) {
     const subtitleFileName = path.join(outputDir, 'auto-sub-zg.srt');
     fs.writeFileSync(subtitleFileName, zgSub, 'utf8');
     
-        // ---------------------------------------------------------
+    // ---------------------------------------------------------
     // ၅။ FFmpeg Video Filters 
     // ---------------------------------------------------------
     let vfFilters = [];
@@ -307,18 +307,21 @@ async function processVideoRecap(videoInput, options) {
     const fontSize = (parseInt(options.captionSize) || 14) * 4; 
     
     const captionYPercent = parseFloat(options.captionY) || 80;
-    let marginV = Math.floor(videoHeight * ((100 - captionYPercent) / 100));
+    
+    // 🔴 Alignment=8 (Top Center) သုံးပြီး အပေါ်မှစ၍ Pixel အတိအကျ တွက်ပါမည်
+    let marginV = Math.floor((videoHeight * (captionYPercent / 100)) - (fontSize / 2));
     
     if (marginV < 0) marginV = 0;
     if (marginV > videoHeight - fontSize) marginV = videoHeight - fontSize - 20;
 
-    const absoluteSrtPath = path.resolve(outputDir, 'auto-sub-zg.srt');
-    const safeSubtitlePath = absoluteSrtPath.replace(/\\/g, '/').replace(/:/g, '\\:'); 
+    // 🔴 Windows/Linux ပြဿနာမဖြစ်စေရန် Relative path သုံးပြီး ကိုးကား (Quote) ဖြင့် သေချာရေးပါမည်
+    const srtPath = 'output/auto-sub-zg.srt';
     
-    const assStyle = `Fontname=Zawgyi-One,FontSize=${fontSize},PrimaryColour=${primaryColor},OutlineColour=&H00000000,BackColour=&HFF000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=${marginV}`;
+    // 🔴 Alignment=8 ထည့်ထားပါသည်
+    const assStyle = `Fontname=Zawgyi-One,FontSize=${fontSize},PrimaryColour=${primaryColor},OutlineColour=&H00000000,BackColour=&HFF000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=8,MarginV=${marginV}`;
     
-    // subtitles filter ကို drawbox ရဲ့ အောက်မှာထားမှသာ စာတန်းက Blur ပေါ်မှာ ပေါ်လာမည်
-    vfFilters.push(`subtitles=${safeSubtitlePath}:fontsdir=.:force_style='${assStyle}'`);
+    // 🔴 ဖိုင်လမ်းကြောင်းကို ' ' ဖြင့်သေချာအုပ်ထားပါသည် (Error လုံးဝမတက်စေရန်)
+    vfFilters.push(`subtitles='${srtPath}':fontsdir=.:force_style='${assStyle}'`);
 
     const finalVfString = vfFilters.join(',');
     const videoOutput = path.join(outputDir, `final-recap-${Date.now()}.mp4`);
