@@ -142,7 +142,7 @@ function hexToAssColor(hex) {
 }
 
 // ---------------------------------------------------------
-// Main Processor
+// Main Processor (Trim & Video Background Blur System)
 // ---------------------------------------------------------
 async function processVideoRecap(videoInput, options) {
     const extractedAudioPath = path.join(outputDir, 'extracted-original.mp3');
@@ -266,38 +266,43 @@ async function processVideoRecap(videoInput, options) {
     }
 
     // ---------------------------------------------------------
-    // 🔴 2. Visual Effects & Real Glass Blur System
+    // 🔴 2. Visual Effects & Blurred Background System
     // ---------------------------------------------------------
     let videoWidth = 1080;
     let videoHeight = 1920; 
     if (options.aspectRatio === '16:9') { videoWidth = 1920; videoHeight = 1080; } 
     else if (options.aspectRatio === '1:1') { videoWidth = 1080; videoHeight = 1080; }
 
-    let baseEffects = `scale=${videoWidth}:${videoHeight}:force_original_aspect_ratio=increase,crop=${videoWidth}:${videoHeight}`;
-    if (options.isFlipped === 'true' || options.isFlipped === true) baseEffects += ',hflip';
-    
-    vfFilters.push(`[v_concat]${baseEffects}[v_scaled]`);
+    let flipEffect = (options.isFlipped === 'true' || options.isFlipped === true) ? ',hflip' : '';
+
+    // 🔴 Video Background ကို အမည်းမဖြစ်စေဘဲ မူရင်းဗီဒီယိုကို Blur လုပ်ပြီး နောက်ခံထားခြင်း
+    vfFilters.push(`[v_concat]split=2[bg_in][fg_in]`);
+    // နောက်ခံ: မျက်နှာပြင်အပြည့်ဖြည့်ပြီး ပြင်းပြင်းထန်ထန် မှုန်ဝါးမည်
+    vfFilters.push(`[bg_in]scale=${videoWidth}:${videoHeight}:force_original_aspect_ratio=increase,crop=${videoWidth}:${videoHeight},boxblur=40:5${flipEffect}[bg_blur]`);
+    // အရှေ့ရုပ်ပုံ: အချိုးအစားမပျက်စေဘဲ မျက်နှာပြင်တွင် အလယ်တည့်တည့်၌ Fit ဖြစ်စေမည် (Crop မလုပ်ပါ)
+    vfFilters.push(`[fg_in]scale=${videoWidth}:${videoHeight}:force_original_aspect_ratio=decrease${flipEffect}[fg_scaled]`);
+    // နောက်ခံအဝါးပေါ်တွင် အရှေ့မှရုပ်ပုံကို ထပ်တင်မည်
+    vfFilters.push(`[bg_blur][fg_scaled]overlay=(W-w)/2:(H-h)/2[v_base]`);
 
     if (options.isBlurred === 'true' || options.isBlurred === true) {
         const blurYPercent = parseFloat(options.blurY) || 80; 
         const boxW = Math.floor(videoWidth * 0.9);
-        // 🔴 အမည်းရောင် Box အစား သဘာဝကျကျ မှုန်ဝါးရန် (Height ကို 8% အထိ လျှော့ချထားသည်)
         const boxH = Math.floor(videoHeight * 0.08); 
         const boxX = Math.floor((videoWidth - boxW) / 2);
         let boxY = Math.floor((videoHeight * (blurYPercent / 100)) - (boxH / 2));
         if (boxY < 0) boxY = 0;
         if (boxY + boxH > videoHeight) boxY = videoHeight - boxH;
 
-        // တကယ့် Real Blur ဖန်တီးခြင်း
-        vfFilters.push(`[v_scaled]split=2[bg][fg]`);
-        vfFilters.push(`[fg]crop=${boxW}:${boxH}:${boxX}:${boxY},boxblur=10:2[blurred]`);
-        vfFilters.push(`[bg][blurred]overlay=${boxX}:${boxY}[v_blurred]`);
+        // စာတန်းထိုးနေရာရှိ သီးသန့် Glass Blur Effect
+        vfFilters.push(`[v_base]split=2[sub_bg][sub_fg]`);
+        vfFilters.push(`[sub_fg]crop=${boxW}:${boxH}:${boxX}:${boxY},boxblur=15:3[sub_blurred]`);
+        vfFilters.push(`[sub_bg][sub_blurred]overlay=${boxX}:${boxY}[v_blurred]`);
     } else {
-        vfFilters.push(`[v_scaled]copy[v_blurred]`);
+        vfFilters.push(`[v_base]copy[v_blurred]`);
     }
 
     const primaryColor = hexToAssColor(options.textColor);
-    const fontSize = (parseInt(options.captionSize) || 12) * 5; 
+    const fontSize = (parseInt(options.captionSize) || 12) * 6; 
     const captionYPercent = parseFloat(options.captionY) || 80;
     
     let marginV = Math.floor((videoHeight * (captionYPercent / 100)) - (fontSize / 2));
@@ -326,7 +331,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     const absoluteAssPath = path.resolve(outputDir, 'auto-sub-zg.ass');
     const safeAssPath = absoluteAssPath.replace(/\\/g, '/').replace(/:/g, '\\:'); 
     
-    // Subtitles ကို အဆုံးသတ်တွင် ထည့်သွင်းခြင်း
     vfFilters.push(`[v_blurred]subtitles='${safeAssPath}':fontsdir='.'[v_final]`);
 
     const videoFilterString = vfFilters.join(';');
