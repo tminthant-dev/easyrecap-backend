@@ -253,7 +253,7 @@ async function processVideoRecap(videoInput, options) {
     const primaryColor = hexToAssColor(options.textColor);
     
     // 🔴 Frontend မှ Size ကို Video Resolution နှင့် အချိုးကျစေရန် (x3 ဆ) မြှောက်ထားပါသည်
-    const fontSize = (parseInt(options.captionSize) || 15) * 3; 
+    const fontSize = (parseInt(options.captionSize) || 12) * 6; 
     const captionYPercent = parseFloat(options.captionY) || 80;
     
     // Y နေရာ အတိအကျ တွက်ချက်ခြင်း
