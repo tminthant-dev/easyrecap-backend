@@ -166,7 +166,10 @@ async function processVideoRecap(videoInput, options) {
 
     const aiResponse = await ai.models.generateContent({
         model: 'gemini-3.7-flash', 
-        contents: [{ inlineData: { data: audioBase64, mimeType: 'audio/mp3' } }, promptText]
+        contents: [
+            { inlineData: { data: audioBase64, mimeType: 'audio/mp3' } },
+            promptText
+        ]
     });
 
     let responseText = aiResponse.text.trim();
@@ -184,6 +187,7 @@ async function processVideoRecap(videoInput, options) {
 
     for (let i = 0; i < translatedSegments.length; i++) {
         let segment = translatedSegments[i];
+        
         const tempSegmentDir = path.join(outputDir, `segment-folder-${i}`);
         if (!fs.existsSync(tempSegmentDir)) fs.mkdirSync(tempSegmentDir, { recursive: true });
         
@@ -195,7 +199,13 @@ async function processVideoRecap(videoInput, options) {
         if (fs.existsSync(tempSegmentDir)) fs.rmdirSync(tempSegmentDir);
         
         let duration = buffer.length / 48000; 
-        audioDatas.push({ start: segment.start, end: segment.end, text: segment.text, ttsBuffer: buffer, newDuration: duration });
+        audioDatas.push({
+            start: segment.start,
+            end: segment.end,
+            text: segment.text,
+            ttsBuffer: buffer, 
+            newDuration: duration
+        });
     }
 
     let maxStretchRatio = 1.0;
@@ -214,6 +224,7 @@ async function processVideoRecap(videoInput, options) {
     let assDialogues = ''; 
     let currentTimeline = 0; 
 
+    // 🔴 Audio Buffering - အသံကို ကြိုတင်တွက်ချက်ခြင်း
     for (let i = 0; i < audioDatas.length; i++) {
         let a = audioDatas[i];
         let scaledStart = a.start * maxStretchRatio;
@@ -227,10 +238,10 @@ async function processVideoRecap(videoInput, options) {
             currentTimeline = scaledStart;
         }
 
+        // Speed မြန်ထားသည့်အတိုင်း Timeline တွက်ချက်ခြင်း
         let spedUpTimeline = currentTimeline / aSpeed;
         let spedUpDuration = a.newDuration / aSpeed;
 
-        // 🔴 ASS Format ဖြင့် စာတန်းထိုး လိုင်းများ ပေါင်းထည့်ခြင်း
         assDialogues += generateAssDialogue(a.text, spedUpTimeline, spedUpDuration);
         
         pcmBuffers.push(a.ttsBuffer);
@@ -238,32 +249,33 @@ async function processVideoRecap(videoInput, options) {
     }
 
     const fullPcmBuffer = Buffer.concat(pcmBuffers);
-    const finalAudioBuffer = addWavHeader(fullPcmBuffer, 24000);
     const generatedAudioPath = path.join(outputDir, 'myanmar-dub.wav');
-    fs.writeFileSync(generatedAudioPath, finalAudioBuffer);
+    fs.writeFileSync(generatedAudioPath, addWavHeader(fullPcmBuffer, 24000));
 
-    // ---------------------------------------------------------
-    // FFmpeg Filter & Subtitle Configuration (Resolution များကို တိကျစွာ သတ်မှတ်သည်)
-    // ---------------------------------------------------------
+    // 🔴 1. Audio Speed (Voice Speed) ကို အရင်ဆုံး වෙනသီးသန့် Temp File သို့ ပြောင်းမည်
+    // ဒါမှသာ Video နဲ့ တွဲတဲ့အခါ Sync လုံးဝမလွဲတော့မှာ ဖြစ်ပါတယ်။
+    const spedUpAudioPath = path.join(outputDir, 'sped-up-audio.wav');
+    await new Promise((resolve, reject) => {
+        ffmpeg(generatedAudioPath)
+            .audioFilters(`atempo=${aSpeed}`)
+            .save(spedUpAudioPath)
+            .on('end', () => resolve())
+            .on('error', (err) => reject(err));
+    });
+
     let videoWidth = 1080;
     let videoHeight = 1920; 
     if (options.aspectRatio === '16:9') { videoWidth = 1920; videoHeight = 1080; } 
     else if (options.aspectRatio === '1:1') { videoWidth = 1080; videoHeight = 1080; }
 
     const primaryColor = hexToAssColor(options.textColor);
-    
-    // 🔴 Frontend မှ Size ကို Video Resolution နှင့် အချိုးကျစေရန် (x3 ဆ) မြှောက်ထားပါသည်
     const fontSize = (parseInt(options.captionSize) || 12) * 6; 
     const captionYPercent = parseFloat(options.captionY) || 80;
     
-    // Y နေရာ အတိအကျ တွက်ချက်ခြင်း
     let marginV = Math.floor((videoHeight * (captionYPercent / 100)) - (fontSize / 2));
     if (marginV < 0) marginV = 0;
     if (marginV > videoHeight - fontSize) marginV = videoHeight - fontSize - 20;
 
-    console.log("📝 Zawgyi ASS စာတန်းထိုး ဖန်တီးနေပါသည်...");
-    
-    // 🔴 ဤနေရာတွင် Resolution (PlayResX/Y) အား တိကျစွာ သတ်မှတ်ထားသဖြင့် နေရာ/Size လုံးဝ မလွဲတော့ပါ
     let assHeader = `[Script Info]
 ScriptType: v4.00+
 PlayResX: ${videoWidth}
@@ -283,8 +295,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     const subtitleFileName = path.join(outputDir, 'auto-sub-zg.ass');
     fs.writeFileSync(subtitleFileName, zgSub, 'utf8');
 
-    // Filters တည်ဆောက်ခြင်း
     let vfFilters = [];
+    // Video Speed 
     vfFilters.push(`setpts=${maxStretchRatio}*(1/${vSpeed})*PTS`);
     vfFilters.push(`scale=${videoWidth}:${videoHeight}:force_original_aspect_ratio=increase`);
     vfFilters.push(`crop=${videoWidth}:${videoHeight}`);
@@ -305,44 +317,43 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     const absoluteAssPath = path.resolve(outputDir, 'auto-sub-zg.ass');
     const safeAssPath = absoluteAssPath.replace(/\\/g, '/').replace(/:/g, '\\:'); 
-    
-    // 🔴 တွက်ချက်ထားသည့် ASS ဖိုင်ကို တိုက်ရိုက် ထည့်သွင်းခြင်း
     vfFilters.push(`subtitles='${safeAssPath}':fontsdir='.'`);
 
     const videoFilterString = vfFilters.join(',');
-    const audioFilterString = `atempo=${aSpeed}`;
     const videoOutput = path.join(outputDir, `final-recap-${Date.now()}.mp4`);
 
     return new Promise((resolve, reject) => {
-        console.log("🎬 FFmpeg Rendering စတင်နေပါသည်...");
+        console.log("🎬 FFmpeg ဖြင့် နောက်ဆုံးဗီဒီယိုကို ပေါင်းစပ်နေပါသည်...");
         ffmpeg()
             .input(videoInput)         
-            .input(generatedAudioPath) 
+            .input(spedUpAudioPath) // 🔴 2. ပြင်ဆင်ပြီးသား အသံဖိုင် (Sped-up Audio) ကိုသာ သုံးမည်
             .complexFilter([
-                `[0:v]${videoFilterString}[v]`,
-                `[1:a]atempo=${aSpeed},aresample=async=1:min_hard_comp=0.100000:first_pts=0[a]`
+                `[0:v]${videoFilterString}[v]`
             ])
             .outputOptions([
                 '-map [v]', 
-                '-map [a]',
+                '-map 1:a', // 🔴 3. တွက်ချက်စရာမလိုတော့ဘဲ အသံကို တိုက်ရိုက်ယူမည်
                 '-c:v libx264',
                 '-preset ultrafast',          
                 '-threads 2',                 
                 '-max_muxing_queue_size 1024',
                 '-c:a aac',
-                '-shortest',
-                // 🔴 အရေးကြီးဆုံး: Video နဲ့ Audio ကို Sync အတင်းညှိခြင်း
-                '-fflags +genpts',
-                '-r 30' 
+                // 🔴 4. Shortest ကို ဖြုတ်လိုက်ပြီး၊ Video ရပ်သွားခြင်းကို ကာကွယ်မည်
+                // (Video သို့မဟုတ် Audio နှစ်ခုထဲက ပိုရှည်တဲ့တစ်ခု အဆုံးအထိ ဆက်သွားပါမည်)
             ])
-            .on('start', (commandLine) => console.log("⏳ Rendering..."))
+            .on('start', (commandLine) => console.log("⏳ Video Rendering စတင်နေပါပြီ..."))
+            .on('progress', (progress) => {
+                if (progress.timemark) {
+                    process.stdout.write(`\r🔄 Processing: ${progress.timemark}   `);
+                }
+            })
             .save(videoOutput)
             .on('end', () => {
-                console.log(`\n🎉 အောင်မြင်ပါသည်။`);
+                console.log(`\n🎉 အောင်မြင်ပါသည်။ ပြီးစီးသွားသော ဗီဒီယို: ${videoOutput}`);
                 resolve(videoOutput);
             })
             .on('error', (err) => {
-                console.error("\n❌ FFmpeg Error:", err.message);
+                console.error("\n❌ FFmpeg အမှားအယွင်း:", err.message);
                 reject(err);
             });
     });
