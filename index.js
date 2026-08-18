@@ -163,8 +163,28 @@ async function processVideoRecap(videoInput, options) {
 
     const aiResponse = await ai.models.generateContent({
         model: 'gemini-3.7-flash', 
-        contents: [{ inlineData: { data: audioBase64, mimeType: 'audio/mp3' } }, promptText]
+        contents: [
+            { inlineData: { data: audioBase64, mimeType: 'audio/mp3' } },
+            promptText
+        ],
+        // 🔴 Safety Policy ကြောင့် Block မလုပ်စေရန် အကုန်ပိတ်ထားခြင်း
+        config: {
+            safetySettings: [
+                { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+                { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+                { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+                { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+            ]
+        }
     });
+
+    // 🔴 Server မကျစေရန်နှင့် Error အတိအကျသိရန် စစ်ဆေးခြင်း
+    if (!aiResponse || !aiResponse.text) {
+        console.error("❌ Gemini API Response တွင် စာသားမပါဝင်ပါ။ Response data:", JSON.stringify(aiResponse, null, 2));
+        throw new Error("Gemini AI မှ စာသားပြန်မပေးပါ။ (Safety Policy ငြိနေသေးခြင်း သို့မဟုတ် Audio ဖတ်မရခြင်း ဖြစ်နိုင်ပါသည်)");
+    }
+
+    let responseText = aiResponse.text.trim();
 
     let responseText = aiResponse.text.trim();
     responseText = responseText.replace(/```json/g, '').replace(/```/g, ''); 
