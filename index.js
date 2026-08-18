@@ -142,7 +142,7 @@ function hexToAssColor(hex) {
 }
 
 // ---------------------------------------------------------
-// Main Processor (OOM Error ဖြေရှင်းထားသော စနစ်သစ်)
+// Main Processor
 // ---------------------------------------------------------
 async function processVideoRecap(videoInput, options) {
     const extractedAudioPath = path.join(outputDir, 'extracted-original.mp3');
@@ -208,46 +208,20 @@ async function processVideoRecap(videoInput, options) {
         audioDatas.push({ start: segment.start, end: segment.end, text: segment.text, ttsBuffer: buffer, newDuration: duration });
     }
 
+    const vSpeed = parseFloat(options.videoSpeed) || 1.0;
     const aSpeed = parseFloat(options.voiceSpeed) || 1.0;
 
     let pcmBuffers = []; 
     let assDialogues = ''; 
     let currentTimeline = 0; 
 
-    // 🔴 1. အသံကို တိတ်ဆိတ်မနေစေရန် အဆက်မပြတ် ဖန်တီးခြင်း
     for (let i = 0; i < audioDatas.length; i++) {
         let a = audioDatas[i];
-        let intendedStart = a.start;
-        if (intendedStart < currentTimeline) intendedStart = currentTimeline;
-
-        let gap = intendedStart - currentTimeline;
-        if (gap > 0.15) gap = 0.15; // Max Gap 0.15s
-
-        if (gap > 0) {
-            let silentBytes = Math.floor(gap * 48000);
-            if (silentBytes % 2 !== 0) silentBytes -= 1;
-            pcmBuffers.push(Buffer.alloc(silentBytes));
-            currentTimeline += gap;
-        }
-
-        // Subtitle Timeline (aSpeed နှင့် အတိအကျ ညှိထားသည်)
-        let finalStart = currentTimeline / aSpeed;
-        let finalDuration = a.newDuration / aSpeed;
-
-        assDialogues += generateAssDialogue(a.text, finalStart, finalDuration);
-        
+        let targetDuration = a.newDuration / aSpeed; 
+        assDialogues += generateAssDialogue(a.text, currentTimeline, targetDuration);
         pcmBuffers.push(a.ttsBuffer);
-        currentTimeline += a.newDuration;
+        currentTimeline += targetDuration;
     }
-
-    // 🔴 2. RAM မလောက်သည့်ပြဿနာဖြေရှင်းရန် (Auto Video Speed Calculation)
-    let originalVideoDuration = translatedSegments[translatedSegments.length - 1].end;
-    let totalFinalAudioDuration = currentTimeline / aSpeed;
-    
-    // ဗီဒီယိုကို အသံကြာချိန်နှင့် အတိအကျကိုက်ညီအောင် Speed ကို အလိုအလျောက် တွက်ချက်မည်
-    let autoVideoSpeed = originalVideoDuration / totalFinalAudioDuration;
-    if (autoVideoSpeed < 0.25) autoVideoSpeed = 0.25; 
-    if (autoVideoSpeed > 4.0) autoVideoSpeed = 4.0;
 
     const fullPcmBuffer = Buffer.concat(pcmBuffers);
     const generatedAudioPath = path.join(outputDir, 'myanmar-dub.wav');
@@ -263,15 +237,67 @@ async function processVideoRecap(videoInput, options) {
     });
 
     // ---------------------------------------------------------
-    // ၃။ Visual Effects, Blur နှင့် စာတန်းထိုး 
+    // 🔴 1. Video Trim & Concat 
+    // ---------------------------------------------------------
+    let vfFilters = [];
+    let concatStr = "";
+
+    for (let i = 0; i < audioDatas.length; i++) {
+        let a = audioDatas[i];
+        let origStart = a.start;
+        let origEnd = a.end;
+        let origDur = origEnd - origStart;
+        if (origDur < 0.1) origDur = 0.1; 
+        
+        let targetDur = a.newDuration / aSpeed; 
+        let ptsRatio = targetDur / origDur; 
+        
+        let outName = audioDatas.length > 1 ? `[v${i}]` : `[v_concat]`;
+        
+        vfFilters.push(`[${i}:v]trim=start=${origStart}:end=${origEnd},setpts=${ptsRatio}*(PTS-STARTPTS)${outName}`);
+        
+        if (audioDatas.length > 1) {
+            concatStr += `[v${i}]`;
+        }
+    }
+
+    if (audioDatas.length > 1) {
+        vfFilters.push(`${concatStr}concat=n=${audioDatas.length}:v=1:a=0[v_concat]`);
+    }
+
+    // ---------------------------------------------------------
+    // 🔴 2. Visual Effects & Real Glass Blur System
     // ---------------------------------------------------------
     let videoWidth = 1080;
     let videoHeight = 1920; 
     if (options.aspectRatio === '16:9') { videoWidth = 1920; videoHeight = 1080; } 
     else if (options.aspectRatio === '1:1') { videoWidth = 1080; videoHeight = 1080; }
 
+    let baseEffects = `scale=${videoWidth}:${videoHeight}:force_original_aspect_ratio=increase,crop=${videoWidth}:${videoHeight}`;
+    if (options.isFlipped === 'true' || options.isFlipped === true) baseEffects += ',hflip';
+    
+    vfFilters.push(`[v_concat]${baseEffects}[v_scaled]`);
+
+    if (options.isBlurred === 'true' || options.isBlurred === true) {
+        const blurYPercent = parseFloat(options.blurY) || 80; 
+        const boxW = Math.floor(videoWidth * 0.9);
+        // 🔴 အမည်းရောင် Box အစား သဘာဝကျကျ မှုန်ဝါးရန် (Height ကို 8% အထိ လျှော့ချထားသည်)
+        const boxH = Math.floor(videoHeight * 0.08); 
+        const boxX = Math.floor((videoWidth - boxW) / 2);
+        let boxY = Math.floor((videoHeight * (blurYPercent / 100)) - (boxH / 2));
+        if (boxY < 0) boxY = 0;
+        if (boxY + boxH > videoHeight) boxY = videoHeight - boxH;
+
+        // တကယ့် Real Blur ဖန်တီးခြင်း
+        vfFilters.push(`[v_scaled]split=2[bg][fg]`);
+        vfFilters.push(`[fg]crop=${boxW}:${boxH}:${boxX}:${boxY},boxblur=10:2[blurred]`);
+        vfFilters.push(`[bg][blurred]overlay=${boxX}:${boxY}[v_blurred]`);
+    } else {
+        vfFilters.push(`[v_scaled]copy[v_blurred]`);
+    }
+
     const primaryColor = hexToAssColor(options.textColor);
-    const fontSize = (parseInt(options.captionSize) || 12) * 6; 
+    const fontSize = (parseInt(options.captionSize) || 12) * 5; 
     const captionYPercent = parseFloat(options.captionY) || 80;
     
     let marginV = Math.floor((videoHeight * (captionYPercent / 100)) - (fontSize / 2));
@@ -297,45 +323,30 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     const subtitleFileName = path.join(outputDir, 'auto-sub-zg.ass');
     fs.writeFileSync(subtitleFileName, zgSub, 'utf8');
 
-    let vfFilters = [];
-    
-    // 🔴 ဤနေရာတွင် Auto-calculated Speed ကို သုံးထားသဖြင့် RAM အနည်းငယ်သာ သုံးစွဲပါမည်
-    vfFilters.push(`setpts=(1/${autoVideoSpeed})*PTS`);
-    
-    vfFilters.push(`scale=${videoWidth}:${videoHeight}:force_original_aspect_ratio=increase`);
-    vfFilters.push(`crop=${videoWidth}:${videoHeight}`);
-    if (options.isFlipped === 'true' || options.isFlipped === true) vfFilters.push('hflip');
-    
-    if (options.isBlurred === 'true' || options.isBlurred === true) {
-        const blurYPercent = parseFloat(options.blurY) || 80; 
-        const boxW = Math.floor(videoWidth * 0.9);
-        const boxH = Math.floor(videoHeight * 0.12);
-        const boxX = Math.floor((videoWidth - boxW) / 2);
-        let boxY = Math.floor((videoHeight * (blurYPercent / 100)) - (boxH / 2));
-        if (boxY < 0) boxY = 0;
-        if (boxY + boxH > videoHeight) boxY = videoHeight - boxH;
-
-        vfFilters.push(`drawbox=x=${boxX}:y=${boxY}:w=${boxW}:h=${boxH}:color=black@0.7:t=fill`); 
-    }
-
     const absoluteAssPath = path.resolve(outputDir, 'auto-sub-zg.ass');
     const safeAssPath = absoluteAssPath.replace(/\\/g, '/').replace(/:/g, '\\:'); 
-    vfFilters.push(`subtitles='${safeAssPath}':fontsdir='.'`);
+    
+    // Subtitles ကို အဆုံးသတ်တွင် ထည့်သွင်းခြင်း
+    vfFilters.push(`[v_blurred]subtitles='${safeAssPath}':fontsdir='.'[v_final]`);
 
-    const videoFilterString = vfFilters.join(',');
+    const videoFilterString = vfFilters.join(';');
     const videoOutput = path.join(outputDir, `final-recap-${Date.now()}.mp4`);
 
     return new Promise((resolve, reject) => {
-        console.log("🎬 FFmpeg ဖြင့် နောက်ဆုံးဗီဒီယိုကို ပေါင်းစပ်နေပါသည်...");
-        ffmpeg()
-            .input(videoInput)         
-            .input(spedUpAudioPath) 
-            .complexFilter([
-                `[0:v]${videoFilterString}[v]`
-            ])
+        console.log("🎬 FFmpeg ဖြင့် ဗီဒီယိုအား အသံနှင့်အညီ ဖြတ်တောက်ပေါင်းစပ်နေပါသည်...");
+        
+        let cmd = ffmpeg();
+        
+        for (let i = 0; i < audioDatas.length; i++) {
+            cmd = cmd.input(videoInput);
+        }
+        
+        cmd = cmd.input(spedUpAudioPath);
+
+        cmd.complexFilter(videoFilterString)
             .outputOptions([
-                '-map [v]', 
-                '-map 1:a', 
+                '-map [v_final]', 
+                `-map ${audioDatas.length}:a`, 
                 '-c:v libx264',
                 '-preset ultrafast',          
                 '-threads 2',                 
